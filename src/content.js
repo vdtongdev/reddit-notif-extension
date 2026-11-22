@@ -5,8 +5,7 @@
   'use strict';
 
   const DROPDOWN_ID   = 'rnd-dropdown';
-  const CACHE_KEY     = 'rnd_notif_cache';
-  const CACHE_TTL_MS  = 60_000; // 1 minute
+  const NOTIFICATIONS_URL = 'https://www.reddit.com/notifications/';
 
   // ─── Selectors for Reddit's bell button ─────────────────────────────────────
   // Reddit (shreddit) uses web components. We try multiple selectors for resilience.
@@ -49,11 +48,9 @@
           </svg>
         </a>
       </div>
-      <div class="rnd-list" id="rnd-list">
-        <div class="rnd-loading">
-          <div class="rnd-spinner"></div>
-          <span>Loading notifications…</span>
-        </div>
+      <div class="rnd-frame-container">
+        <div class="rnd-loading" id="rnd-status">Loading notifications...</div>
+        <iframe class="rnd-frame" title="Reddit notifications"></iframe>
       </div>
     `;
     document.body.appendChild(div);
@@ -65,142 +62,87 @@
     const rect = bell.getBoundingClientRect();
     const dd   = dropdown;
 
-    dd.style.top  = `${rect.bottom + window.scrollY + 6}px`;
+    dd.style.top  = `${rect.bottom + 6}px`;
 
     // Try to align right edge with bell, but keep within viewport
-    let left = rect.right + window.scrollX - 320; // 320 = dropdown width
-    left = Math.max(8, Math.min(left, window.innerWidth - 328));
+    const width = dd.offsetWidth;
+    let left = rect.right - width;
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
     dd.style.left = `${left}px`;
   }
 
-  // ─── Fetch notifications from Reddit's JSON API ──────────────────────────────
-  // Because the content script runs on reddit.com, the user's session cookies
-  // are automatically included — no OAuth setup needed.
-  async function fetchNotifications() {
-    // Check cache first
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (raw) {
-      try {
-        const { ts, data } = JSON.parse(raw);
-        if (Date.now() - ts < CACHE_TTL_MS) return data;
-      } catch (_) {}
-    }
-
-    const res = await fetch('https://www.reddit.com/message/inbox.json?limit=10&raw_json=1', {
-      credentials: 'include',
-      headers: { 'Accept': 'application/json' },
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-
-    const items = (json?.data?.children ?? []).map(({ data: d }) => ({
-      id:        d.name,
-      type:      d.type,           // 'comment_reply', 'post_reply', 'username_mention', 'private_message'
-      subject:   d.subject,
-      body:      d.body,
-      author:    d.author,
-      subreddit: d.subreddit,
-      context:   d.context,        // relative URL to the comment
-      dest:      d.dest,
-      new:       d.new,
-      created:   d.created_utc,
-    }));
-
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: items }));
-    return items;
-  }
-
-  // ─── Render notification items ───────────────────────────────────────────────
-  function typeLabel(type) {
-    switch (type) {
-      case 'comment_reply':    return 'replied to your comment';
-      case 'post_reply':       return 'replied to your post';
-      case 'username_mention': return 'mentioned you';
-      case 'private_message':  return 'sent you a message';
-      default:                 return type?.replace(/_/g, ' ') ?? 'notification';
-    }
-  }
-
-  function timeAgo(utcSeconds) {
-    const diff = Math.floor(Date.now() / 1000) - utcSeconds;
-    if (diff < 60)           return `${diff}s ago`;
-    if (diff < 3600)         return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400)        return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 604800)       return `${Math.floor(diff / 86400)}d ago`;
-    return new Date(utcSeconds * 1000).toLocaleDateString();
-  }
-
-  function stripMarkdown(text = '') {
-    return text
-      .replace(/!\[.*?\]\(.*?\)/g, '[image]')
-      .replace(/\[([^\]]+)\]\(.*?\)/g, '$1')
-      .replace(/[*_~`>#]/g, '')
-      .trim();
-  }
-
-  function renderItems(items) {
-    const list = document.getElementById('rnd-list');
-    if (!list) return;
-
-    if (!items || items.length === 0) {
-      list.innerHTML = `<div class="rnd-empty">No notifications yet 🎉</div>`;
+  // Keep only the branch containing Reddit's notification manager visible.
+  function prepareFrame(frame) {
+    const status = dropdown.querySelector('#rnd-status');
+    let doc;
+    try {
+      doc = frame.contentDocument;
+      if (!doc || doc.location.origin !== location.origin) throw new Error('Unexpected origin');
+    } catch (_) {
+      status.textContent = 'Could not load notifications. Use View all to open Reddit.';
       return;
     }
 
-    list.innerHTML = items.map(n => {
-      const url = n.context
-        ? `https://www.reddit.com${n.context}`
-        : `https://www.reddit.com/message/inbox/`;
+    const isolate = () => {
+      const feed = doc.querySelector('notifications-main-manager') ||
+        (doc.querySelector('main notification-item') && doc.querySelector('main'));
+      if (!feed) return false;
 
-      const sub = n.subreddit ? `r/${n.subreddit} · ` : '';
+      let node = feed;
+      while (node && node !== doc.body) {
+        const parent = node.parentElement;
+        if (!parent) return false;
+        for (const sibling of parent.children) {
+          if (sibling !== node) sibling.style.setProperty('display', 'none', 'important');
+        }
+        if (node !== feed) node.style.setProperty('display', 'block', 'important');
+        node.style.setProperty('width', '100%', 'important');
+        node.style.setProperty('max-width', 'none', 'important');
+        node.style.setProperty('margin', '0', 'important');
+        node.style.setProperty('padding', node === feed ? '12px 16px' : '0', 'important');
+        node.style.setProperty('box-sizing', 'border-box', 'important');
+        node = parent;
+      }
+      doc.body.style.setProperty('margin', '0', 'important');
+      frame.classList.add('rnd-frame--ready');
+      status.hidden = true;
+      return true;
+    };
 
-      return `
-        <a class="rnd-item ${n.new ? 'rnd-item--unread' : ''}" href="${url}" target="_blank">
-          ${n.new ? '<span class="rnd-unread-dot"></span>' : ''}
-          <div class="rnd-item-body">
-            <div class="rnd-item-meta">
-              <span class="rnd-author">u/${n.author}</span>
-              <span class="rnd-action">${typeLabel(n.type)}</span>
-            </div>
-            <div class="rnd-sub-meta">${sub}${timeAgo(n.created)}</div>
-            <div class="rnd-preview">${stripMarkdown(n.body).slice(0, 120)}${n.body?.length > 120 ? '…' : ''}</div>
-          </div>
-        </a>
-      `;
-    }).join('');
-  }
-
-  function renderError(msg) {
-    const list = document.getElementById('rnd-list');
-    if (list) list.innerHTML = `<div class="rnd-error">⚠ ${msg}</div>`;
+    if (!isolate()) {
+      const observer = new MutationObserver(() => {
+        if (isolate()) observer.disconnect();
+      });
+      observer.observe(doc.documentElement, { childList: true, subtree: true });
+      setTimeout(() => {
+        observer.disconnect();
+        if (!frame.classList.contains('rnd-frame--ready')) {
+          status.textContent = 'Could not load notifications. Use View all to open Reddit.';
+        }
+      }, 15000);
+    }
   }
 
   // ─── Open / close dropdown ───────────────────────────────────────────────────
-  async function openDropdown(bell) {
+  function openDropdown(bell) {
     if (!dropdown) dropdown = createDropdown();
 
     positionDropdown(bell);
     dropdown.classList.add('rnd-open');
     isOpen = true;
 
-    // Fetch and render
-    const listEl = document.getElementById('rnd-list');
-    if (listEl) {
-      listEl.innerHTML = `<div class="rnd-loading"><div class="rnd-spinner"></div><span>Loading…</span></div>`;
-    }
-
-    try {
-      const items = await fetchNotifications();
-      renderItems(items);
-    } catch (err) {
-      console.warn('[RND] fetch error:', err);
-      if (err.message.includes('401') || err.message.includes('403')) {
-        renderError('Not logged in — please sign in to Reddit.');
-      } else {
-        renderError('Could not load notifications. Try refreshing.');
+    const frame = dropdown.querySelector('.rnd-frame');
+    const status = dropdown.querySelector('#rnd-status');
+    frame.classList.remove('rnd-frame--ready');
+    status.hidden = false;
+    status.textContent = 'Loading notifications...';
+    frame.onload = () => prepareFrame(frame);
+    frame.src = NOTIFICATIONS_URL;
+    setTimeout(() => {
+      if (!frame.classList.contains('rnd-frame--ready') && !status.hidden) {
+        status.textContent = 'Could not load notifications. Use View all to open Reddit.';
       }
-    }
+    }, 15000);
   }
 
   function closeDropdown() {
@@ -236,6 +178,15 @@
 
     closeDropdown();
   });
+
+  // Keep the dropdown aligned if Reddit's navigation moves or the viewport changes.
+  function repositionOpenDropdown() {
+    if (!isOpen) return;
+    const bell = findBell();
+    if (bell) positionDropdown(bell);
+  }
+  window.addEventListener('scroll', repositionOpenDropdown, { passive: true });
+  window.addEventListener('resize', repositionOpenDropdown);
 
   // Close on Escape
   document.addEventListener('keydown', (e) => {

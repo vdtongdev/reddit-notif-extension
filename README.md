@@ -1,16 +1,14 @@
 # Reddit Notification Dropdown
 
-A Chrome/Brave extension that transforms Reddit's bell icon into a **quick-view dropdown** showing your latest 10 notifications — without ever leaving the page.
+A Chrome/Brave extension that transforms Reddit's bell icon into a **quick-view dropdown** showing Reddit's notifications feed — without ever leaving the page.
 
 ---
 
 ## Features
 
-- Click the 🔔 bell → instant dropdown with your latest 10 notifications
-- Unread notifications highlighted with an orange dot
-- Shows: who, action type (reply/mention/DM), subreddit, time ago, and preview text (NOTE: Suggested notification won't be shown in the dropdown.)
-- "View all" button links to `/notifications/`
-- Results cached for 60s to avoid hammering the API
+- Click the bell to open Reddit's notifications section in a dropdown
+- Includes suggestions, breaking news, and other notifications available in Reddit's feed
+- "View all" opens the full notifications page in a new tab
 - Works with Reddit's SPA navigation (no page refresh needed)
 - Close with Escape key or clicking outside
 
@@ -30,26 +28,10 @@ A Chrome/Brave extension that transforms Reddit's bell icon into a **quick-view 
 
 ## 🔧 How it works
 
-Reddit's session cookies are automatically included in `fetch()` calls made from content scripts running on `reddit.com`. The extension calls:
-
-```
-GET https://www.reddit.com/message/inbox.json?limit=10&raw_json=1
-```
-
-No OAuth setup, no API keys.
+The dropdown loads Reddit's notifications page using your existing session and hides the surrounding page layout. Reddit controls the feed and may mark notifications as read when it loads. If Reddit changes its page or prevents embedding, use **View all** to open the full page.
 
 ---
 
-## ⚙️ Customization
+## Customization
 
-**Change number of notifications shown** — in `content.js`, change the `limit=10` in the fetch URL:
-```js
-'https://www.reddit.com/message/inbox.json?limit=25&raw_json=1'
-```
-
-**Change cache duration** — modify `CACHE_TTL_MS` at the top of `content.js`:
-```js
-const CACHE_TTL_MS = 60_000; // 1 minute
-```
-
-**Style the dropdown** — edit `src/dropdown.css`.
+**Style the dropdown** - edit `src/dropdown.css`.
