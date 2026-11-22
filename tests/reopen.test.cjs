@@ -1,0 +1,18 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('src/content.js', 'utf8');
+const start = source.indexOf('  function openDropdown(bell) {');
+const end = source.indexOf('\n  function closeDropdown()', start);
+const classes = new Set(['rnd-frame--ready']);
+const status = { hidden: true };
+const frame = { classList: { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) } };
+let navigations = 0;
+Object.defineProperty(frame, 'src', { set() { navigations++; } });
+const dropdown = { classList: { add() {} }, querySelector: s => s === '.rnd-frame' ? frame : status };
+const context = { dropdown, isOpen: false, frame, status, positionDropdown() {}, setTimeout() {}, NOTIFICATIONS_URL: 'https://www.reddit.com/notifications/' };
+vm.runInNewContext(source.slice(start, end) + '\nopenDropdown({});', context);
+assert.equal(classes.has('rnd-frame--ready'), true, 'reopening a loaded feed keeps it visible');
+assert.equal(status.hidden, true);
+assert.equal(navigations, 0, 'reopening does not start a redundant navigation');
+console.log('Loaded feed remains visible when reopened');

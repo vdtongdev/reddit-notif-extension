@@ -133,6 +133,8 @@
 
     const frame = dropdown.querySelector('.rnd-frame');
     const status = dropdown.querySelector('#rnd-status');
+    // Reuse the loaded feed when reopening instead of hiding it for another load.
+    if (frame.classList.contains('rnd-frame--ready')) return;
     frame.classList.remove('rnd-frame--ready');
     status.hidden = false;
     status.textContent = 'Loading notifications...';
